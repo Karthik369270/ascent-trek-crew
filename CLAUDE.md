@@ -28,7 +28,7 @@ affected screen in the browser in **both light and dark themes** and at **phone 
 - React 18 + Vite 8 (`@vitejs/plugin-react` 6), plain JavaScript (JSX), no TypeScript
 - `vite-plugin-pwa` (generateSW, autoUpdate) — config in `vite.config.js`
 - Supabase (`@supabase/supabase-js` v2): Postgres + auth (email/password) + realtime
-- Leaflet (used directly, not react-leaflet) with CARTO basemap tiles
+- Leaflet (used directly, not react-leaflet) with standard OpenStreetMap tiles (no key; dark mode = CSS filter on `.leaflet-tile-pane`; CARTO now needs a key)
 - Font: Plus Jakarta Sans via `@fontsource-variable/plus-jakarta-sans` (bundled, works offline)
 - No router library, no state library, no CSS framework, no chart library — keep it that way unless asked
 

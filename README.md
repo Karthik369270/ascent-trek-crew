@@ -134,5 +134,6 @@ friends' Android phones; no Play Store listing is needed.
 
 ## Map tiles
 
-Maps use OpenStreetMap data via CARTO basemaps, which are free for light, non-commercial use like this.
+Maps use the standard OpenStreetMap tiles (no API key needed), which are fine for light, non-commercial use like this.
+Dark mode darkens the same tiles with a CSS filter. (CARTO basemaps were used earlier but now need an API key.)
 Attribution is shown on the map.

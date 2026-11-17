@@ -4,11 +4,10 @@ import 'leaflet/dist/leaflet.css';
 import { useApp } from '../lib/hooks.js';
 import { initials } from '../lib/format.js';
 
-const TILES = {
-  light: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
-  dark: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
-};
-const ATTR = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>';
+// Standard OpenStreetMap tiles: free, no API key (CARTO started requiring one).
+// There is no dark OSM style, so dark mode darkens these with a CSS filter (see .leaflet-tile-pane in styles.css).
+const TILES = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
+const ATTR = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
 const DEFAULT_CENTER = [17.385, 78.4867];
 
 /**
@@ -26,6 +25,7 @@ export default function RouteMap({ points = [], position, people = [], follow = 
   useEffect(() => {
     const m = L.map(el.current, { zoomControl: false, attributionControl: true }).setView(DEFAULT_CENTER, 13);
     L.control.zoom({ position: 'bottomright' }).addTo(m);
+    L.tileLayer(TILES, { attribution: ATTR, maxZoom: 19 }).addTo(m);
     map.current = m;
     layers.current.route = L.polyline([], { color: '#1D1F1C', weight: 7, opacity: 0.18, lineCap: 'round' }).addTo(m);
     layers.current.routeTop = L.polyline([], { color: theme === 'dark' ? '#DDF25A' : '#6E8F12', weight: 4, lineCap: 'round' }).addTo(m);
@@ -39,8 +39,6 @@ export default function RouteMap({ points = [], position, people = [], follow = 
   useEffect(() => {
     const m = map.current;
     if (!m) return;
-    if (layers.current.tiles) m.removeLayer(layers.current.tiles);
-    layers.current.tiles = L.tileLayer(TILES[theme] || TILES.light, { attribution: ATTR, maxZoom: 19, subdomains: 'abcd' }).addTo(m);
     layers.current.routeTop.setStyle({ color: theme === 'dark' ? '#DDF25A' : '#6E8F12' });
   }, [theme]);
 
