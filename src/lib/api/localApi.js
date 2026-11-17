@@ -11,6 +11,7 @@ function load() {
   let s = null;
   try { s = JSON.parse(localStorage.getItem(KEY) || 'null'); } catch { s = null; }
   if (!s) { s = makeSeed(); persist(s); }
+  if (!s.messages) s.messages = []; // demo data saved before chat existed
   return s;
 }
 function persist(s) {
@@ -135,6 +136,25 @@ export async function pushLiveLocation(userId, groupId, lat, lng) {
 }
 export async function clearLiveLocation(userId) { mutate((s) => { s.live = s.live.filter((l) => l.user_id !== userId); }); }
 export async function getLiveLocations(groupId) { return delay(clone(load().live.filter((l) => l.group_id === groupId))); }
+
+// Same visibility as the database rules: crew chat + private messages you sent or received
+export async function getMessages(groupId, limit = 500) {
+  const s = load();
+  return delay(clone(
+    s.messages
+      .filter((m) => m.group_id === groupId && (!m.recipient_id || m.sender_id === s.me || m.recipient_id === s.me))
+      .sort((a, b) => a.created_at.localeCompare(b.created_at))
+      .slice(-limit)
+  ));
+}
+export async function sendMessage(groupId, senderId, recipientId, body) {
+  return mutate((s) => {
+    const m = { id: uid(), group_id: groupId, sender_id: senderId, recipient_id: recipientId || null, body, created_at: new Date().toISOString() };
+    s.messages.push(m);
+    return clone(m);
+  });
+}
+export async function deleteMessage(id) { mutate((s) => { s.messages = s.messages.filter((m) => m.id !== id); }); }
 
 export function subscribe(_groupId, cb) {
   dataListeners.add(cb);

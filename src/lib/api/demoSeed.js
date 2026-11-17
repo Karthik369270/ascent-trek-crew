@@ -113,7 +113,25 @@ export function makeSeed() {
     { user_id: people[2].id, group_id: groupId, lat: 17.4472, lng: 78.3951, updated_at: new Date(now.getTime() - 22 * 60e3).toISOString() },
   ];
 
+  // A little chat history. The last two arrive after "You" last wrote, so they show as unread.
+  const ago = (min) => new Date(now.getTime() - min * 60e3).toISOString();
+  const [, arjun, meera, rahul, sneha] = people;
+  const msg = (from, to, body, min) => ({ id: uid(), group_id: groupId, sender_id: from.id, recipient_id: to ? to.id : null, body, created_at: ago(min) });
+  const messages = [
+    msg(arjun, null, 'Morning crew! Who’s up for stairs at 6 tomorrow?', 26 * 60),
+    msg(sneha, null, 'Me 🙋‍♀️ My building has 14 floors', 25 * 60),
+    msg(people[0], null, 'Count me in', 24 * 60),
+    msg(rahul, null, 'Knee is a bit sore, skipping this week', 20 * 60),
+    msg(meera, rahul, 'Take it easy, ice it tonight. Want me to send the stretches I do?', 19 * 60),
+    msg(people[0], arjun, 'Do you have a spare head torch for the trek?', 5 * 60),
+    msg(arjun, people[0], 'Yes, I have two. Will bring one', 4 * 60),
+    msg(people[0], null, 'Packing list is up in the Plan tab, tick what you have', 3 * 60),
+    msg(meera, people[0], 'Did you book the Haridwar train yet?', 70),
+    msg(arjun, null, '400 m of stairs done 🔥 Chandrashila here we come', 40),
+  ];
+
   return {
+    messages,
     signedIn: false,
     me,
     groups: [{ id: groupId, name: 'Chandrashila Crew', invite_code: 'CH4NDR', trek_name: 'Chopta – Tungnath – Chandrashila', trek_date: `${trek.getFullYear()}-${String(trek.getMonth() + 1).padStart(2, '0')}-${String(trek.getDate()).padStart(2, '0')}`, climb_goal_m: 20000, created_by: me, created_at: now.toISOString() }],

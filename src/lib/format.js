@@ -22,6 +22,13 @@ export function durationShort(s) {
   return `${Math.floor(m / 60)}h ${pad(m % 60)}m`;
 }
 
+// Cycling reads better as km/h; everything on foot as min/km
+export function paceOrSpeed(type, distM, durS) {
+  if (type !== 'cycle') return { label: 'Pace', value: pace(distM, durS), unit: 'min / km' };
+  if (!distM || distM < 100 || !durS) return { label: 'Speed', value: '–', unit: 'km/h' };
+  return { label: 'Speed', value: (distM / 1000 / (durS / 3600)).toFixed(1), unit: 'km/h' };
+}
+
 export function pace(distM, durS) {
   if (!distM || distM < 100 || !durS) return '–';
   const total = Math.round(durS / (distM / 1000));
@@ -55,6 +62,7 @@ export const TYPES = {
   hike: { label: 'Hike', icon: 'mountain' },
   stairs: { label: 'Stairs', icon: 'stairs' },
   incline: { label: 'Incline', icon: 'incline' },
+  cycle: { label: 'Cycling', icon: 'bike' },
   other: { label: 'Workout', icon: 'clock' },
 };
 

@@ -160,6 +160,21 @@ export async function getLiveLocations(groupId) {
   return must(await supabase.from('live_locations').select('*').eq('group_id', groupId));
 }
 
+// ── Chat (recipientId null = crew chat) ─────────────────────
+// Returns the latest `limit` messages, oldest first. Privacy rules only return crew chat + your own private messages.
+export async function getMessages(groupId, limit = 500) {
+  const rows = must(await supabase.from('messages').select('*').eq('group_id', groupId).order('created_at', { ascending: false }).limit(limit));
+  return rows.reverse();
+}
+
+export async function sendMessage(groupId, senderId, recipientId, body) {
+  return must(await supabase.from('messages').insert({ group_id: groupId, sender_id: senderId, recipient_id: recipientId || null, body }).select().single());
+}
+
+export async function deleteMessage(id) {
+  must(await supabase.from('messages').delete().eq('id', id));
+}
+
 // ── Realtime ────────────────────────────────────────────────
 export function subscribe(groupId, cb) {
   const g = `group_id=eq.${groupId}`;
@@ -172,6 +187,7 @@ export function subscribe(groupId, cb) {
     .on('postgres_changes', { event: '*', schema: 'public', table: 'checklist_ticks' }, cb)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'live_locations', filter: g }, cb)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles', filter: g }, cb)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'messages', filter: g }, cb)
     .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'groups', filter: `id=eq.${groupId}` }, cb)
     .subscribe();
   return () => supabase.removeChannel(ch);

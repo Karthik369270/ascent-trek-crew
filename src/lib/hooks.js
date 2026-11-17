@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, createContext, useContext } from 'react';
-import { GpsTracker } from './geo.js';
+import { GpsTracker, MAX_SPEED_CYCLE_MS } from './geo.js';
 import { api } from './api/index.js';
 
 export const AppContext = createContext(null);
@@ -54,6 +54,8 @@ export function useTrackerController(profile, group) {
   if (!ref.current) ref.current = new GpsTracker(setState);
   const t = ref.current;
   const status = state?.status ?? 'idle';
+  // Cycling is faster, so allow bigger jumps between GPS fixes before treating them as glitches
+  useEffect(() => { t.maxSpeed = type === 'cycle' ? MAX_SPEED_CYCLE_MS : 12; }, [type, t]);
   const [, tick] = useState(0);
 
   useEffect(() => {

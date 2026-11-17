@@ -2,7 +2,7 @@
 
 A private fitness tracker for a small group of friends preparing for a trek (set up for Chopta → Tungnath → Chandrashila).
 It's like Strava, but only your crew can see it: GPS walk/run/hike tracking, stair and incline logging, daily targets,
-streaks, leaderboards, a trek readiness score, a shared "crew climb", a 4-week plan, a packing checklist and live
+streaks, leaderboards, crew chat and private messages, a trek readiness score, a shared "crew climb", a 4-week plan, a packing checklist and live
 location on trek day. Light and dark themes included.
 
 It's a **Progressive Web App (PWA)**: you deploy it once and send a link. Friends open it on their phone and tap
@@ -78,7 +78,7 @@ the next time they open it.
   Web apps can't record GPS in the background or with the screen locked. That's the one real trade-off
   versus a Play Store app (see "Going native" below).
 - GPS noise is filtered: fixes worse than ±35 m are ignored, jitter while standing still isn't counted, and impossible
-  jumps (> 43 km/h) are dropped. Elevation uses smoothed altitude with a 4 m threshold, so noise doesn't add fake climb.
+  jumps (> 43 km/h on foot, > 90 km/h cycling) are dropped. Elevation uses smoothed altitude with a 4 m threshold, so noise doesn't add fake climb.
 - Some phones don't report altitude. When saving, you can type the climb in yourself.
 - If the phone kills the tab mid-walk, a recovery copy is kept and the app offers to save it next time.
 - **Stairs / treadmill:** use **Log manually**. Stairs count as about 3 m per floor; incline = distance × incline %.

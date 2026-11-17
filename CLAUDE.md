@@ -43,20 +43,23 @@ src/lib/api/supabaseApi.js   real backend
 src/lib/api/localApi.js      demo backend (localStorage), same function signatures
 src/lib/api/demoSeed.js      seeded fake 5-person crew + ~35 days of activities
 src/lib/geo.js               GpsTracker class (filtering, elevation smoothing, pause/resume), haversine, simplify
+src/lib/chat.js              chat thread keys + unread counts (read-up-to times per device in localStorage)
 src/lib/stats.js             all fitness maths: totals, streaks, readiness, leaderboard, badges, PLAN, TREK profile
 src/lib/format.js            number/date/pace formatting, TYPES (activity types), shareText()
 src/components/Icon.jsx      inline SVG icon set (`<Icon name="..."/>`) — add new icons here, don't add an icon library
 src/components/bits.jsx      Avatar, AvatarStack, Pill, Segmented, Progress, Sheet (modal), Empty, CardHead
 src/components/Charts.jsx    Lollipop, MountainProfile, VPill, Sparkbars, MiniRoute (all hand-written SVG)
 src/components/RouteMap.jsx  Leaflet map (route polyline, "me" marker, crew markers), theme-aware tiles
-src/screens/                 Auth, Onboarding, Home, Track, Feed, Crew, Plan, Profile
+src/screens/                 Auth, Onboarding, Home, Track, Feed, Crew, Chat, Plan, Profile
 src/styles.css               ALL styling; design tokens at the top (light in :root, dark in [data-theme='dark'])
 supabase/schema.sql          tables, RLS policies, RPCs, trigger, realtime publication (idempotent, re-runnable)
 ```
 
 ### Key patterns
 
-- **Routing** is hash-based (`#home`, `#track`, `#feed`, `#crew`, `#plan`, `#profile`). Navigate with `go(tab)` from
+- **Routing** is hash-based (`#home`, `#track`, `#feed`, `#crew`, `#chat`, `#plan`, `#profile`; an open chat is
+  `#chat/crew` or `#chat/<member id>`). Chat is in the desktop rail; on phones it's a top-bar icon (`topOnMobile`)
+  so Record stays centred in the bottom nav. Navigate with `go(tab)` from
   `useApp()`. `SCREENS`/`NAV` in `App.jsx` define tabs. Invite links use `/?join=CODE` (read in Onboarding).
 - **Global state** lives in `App.jsx` and is exposed through `AppContext`: `user, profile, group, members, memberById,
   activities, checklist, live, refresh, go, toast, tracker, theme, pref, setPref, isDemo, signOut`.
@@ -81,8 +84,10 @@ supabase/schema.sql          tables, RLS policies, RPCs, trigger, realtime publi
 - `READINESS_TARGETS`: weekly climb 1,000 m (40 pts), longest outing 10 km (20), biggest single climb 400 m (20),
   active days 12/21 (20). Labels: ≥75 "Summit ready", ≥45 "Getting there", else "Needs work".
 - `PLAN`: 4 weeks ending the day before the trek (base → climb → peak → taper).
+- Cycling (`cycle`) counts for climb, minutes, active days and streaks but not distance (`DISTANCE_EXCLUDES` /
+  `footDistance` in stats.js); shown as km/h instead of pace.
 - Manual stairs = 3 m per floor; incline gain = distance × incline %.
-- GPS filters in `geo.js`: ignore accuracy > 35 m, jitter < max(3 m, 0.4×accuracy), speed > 12 m/s; elevation uses
+- GPS filters in `geo.js`: ignore accuracy > 35 m, jitter < max(3 m, 0.4×accuracy), speed > 12 m/s (25 m/s for cycling); elevation uses
   EMA smoothing with a 4 m hysteresis step. Change these deliberately — they were validated with a simulated walk
   (1.11 km measured vs 1.11 km true; 96 m vs 99.5 m true climb with ±1.5 m altitude noise).
 
@@ -107,7 +112,10 @@ Rules:
 ## Database (Supabase)
 
 `supabase/schema.sql` is the single source of truth. Tables: `groups`, `profiles`, `activities`, `kudos`, `comments`,
-`checklist_items`, `checklist_ticks`, `live_locations`.
+`checklist_items`, `checklist_ticks`, `live_locations`, `messages`.
+- `messages.recipient_id` null = crew chat; set = private message, readable only by sender and recipient (RLS).
+- `activities.type` allowed values live in the `activities_type_check` constraint, dropped and re-added each run so
+  new types reach existing databases.
 
 - Every table has RLS. Access is scoped through `public.my_group_id()` (security definer) — users only see their crew.
 - Profiles are created by the `on_auth_user_created` trigger. Joining/creating crews **only** via RPCs
@@ -143,6 +151,7 @@ worker auto-updates clients. Full steps are in `README.md` — keep it in sync w
 - No step counting (browsers can't read the pedometer); targets are distance, climb and active minutes.
 - Nudges use `navigator.share` / WhatsApp link, not push notifications. Web push would need a service-worker push
   handler + a Supabase Edge Function — not built yet.
+- Chat unread counts are per device (localStorage), not synced; no notifications while the app is closed.
 - No editing of saved activities (delete + re-log). No comment deletion UI (API exists).
 - Activities older than 120 days are not loaded (`loadCrew` in `App.jsx`).
 

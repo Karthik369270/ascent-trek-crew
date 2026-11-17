@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api, getMode, hasSupabase, setMode } from './lib/api/index.js';
 import { AppContext, useApp, useTheme, useTrackerController } from './lib/hooks.js';
 import { addDays, daysUntil, startOfDay } from './lib/stats.js';
+import { firstRunSince, loadRead, saveRead, threadKeyOf, unreadCounts } from './lib/chat.js';
 import Icon from './components/Icon.jsx';
 import { Avatar } from './components/bits.jsx';
 import Auth from './screens/Auth.jsx';
@@ -11,17 +12,20 @@ import Track from './screens/Track.jsx';
 import Feed from './screens/Feed.jsx';
 import Crew from './screens/Crew.jsx';
 import Plan from './screens/Plan.jsx';
+import Chat from './screens/Chat.jsx';
 import Profile from './screens/Profile.jsx';
 
-const SCREENS = { home: Home, track: Track, feed: Feed, crew: Crew, plan: Plan, profile: Profile };
+const SCREENS = { home: Home, track: Track, feed: Feed, crew: Crew, chat: Chat, plan: Plan, profile: Profile };
 const NAV = [
   { id: 'home', label: 'Home', icon: 'home' },
   { id: 'feed', label: 'Feed', icon: 'feed' },
   { id: 'track', label: 'Record', icon: 'play' },
   { id: 'crew', label: 'Crew', icon: 'crew' },
+  // Chat sits in the desktop rail; on phones it's an icon in the top bar so Record stays centred in the bottom nav
+  { id: 'chat', label: 'Chat', icon: 'chat', topOnMobile: true },
   { id: 'plan', label: 'Plan', icon: 'plan' },
 ];
-const TITLES = { home: null, track: 'Record', feed: 'Crew feed', crew: 'Crew', plan: 'Trek plan', profile: 'You' };
+const TITLES = { home: null, track: 'Record', feed: 'Crew feed', crew: 'Crew', chat: 'Chat', plan: 'Trek plan', profile: 'You' };
 
 function readTab() {
   const t = location.hash.replace('#', '').split('/')[0];
@@ -37,6 +41,8 @@ export default function App() {
   const [activities, setActivities] = useState([]);
   const [checklist, setChecklist] = useState({ items: [], ticks: [] });
   const [live, setLive] = useState([]);
+  const [messages, setMessages] = useState([]);
+  const [chatRead, setChatRead] = useState({});
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState(readTab);
   const [toastMsg, setToastMsg] = useState(null);
@@ -79,10 +85,11 @@ export default function App() {
   // ── Data ──────────────────────────────────────────────────
   const loadCrew = useCallback(async (groupId) => {
     const since = addDays(startOfDay(), -120).toISOString();
-    const [g, m, a, c, l] = await Promise.all([
+    const [g, m, a, c, l, msgs] = await Promise.all([
       api.getGroup(groupId), api.getMembers(groupId), api.getActivities(groupId, since), api.getChecklist(groupId), api.getLiveLocations(groupId),
+      api.getMessages(groupId).catch(() => []), // [] if the database hasn't got the messages table yet
     ]);
-    setGroup(g); setMembers(m); setActivities(a); setChecklist(c); setLive(l);
+    setGroup(g); setMembers(m); setActivities(a); setChecklist(c); setLive(l); setMessages(msgs);
   }, []);
 
   const loadAll = useCallback(async () => {
@@ -116,6 +123,33 @@ export default function App() {
   }, [groupId, loadCrew]);
 
   const refresh = useCallback(() => (groupId ? loadCrew(groupId) : loadAll()), [groupId, loadCrew, loadAll]);
+  const refreshMessages = useCallback(() => (groupId ? api.getMessages(groupId).then(setMessages) : Promise.resolve()), [groupId]);
+
+  // ── Chat unread tracking (per device) ─────────────────────
+  const uid = user?.id;
+  useEffect(() => { setChatRead(uid ? loadRead(uid) : {}); }, [uid]);
+  useEffect(() => {
+    if (!uid || chatRead._since || loading || !groupId) return;
+    const since = firstRunSince(messages, uid);
+    setChatRead((prev) => {
+      if (prev._since) return prev;
+      const r = { ...prev, _since: since };
+      saveRead(uid, r);
+      return r;
+    });
+  }, [uid, chatRead, loading, groupId, messages]);
+  const markRead = useCallback((key) => {
+    if (!uid) return;
+    setChatRead((prev) => {
+      const latest = messages.filter((m) => threadKeyOf(m, uid) === key).map((m) => new Date(m.created_at).getTime());
+      const upTo = new Date(Math.max(Date.now(), ...latest)).toISOString();
+      if (prev[key] && new Date(prev[key]) >= new Date(upTo)) return prev;
+      const r = { ...prev, [key]: upTo };
+      saveRead(uid, r);
+      return r;
+    });
+  }, [uid, messages]);
+  const unread = useMemo(() => unreadCounts(messages, uid, chatRead), [messages, uid, chatRead]);
 
   const signOut = useCallback(async () => {
     if (tracker.status !== 'idle') tracker.discard();
@@ -129,6 +163,7 @@ export default function App() {
 
   const ctx = {
     user, profile, setProfile, group, setGroup, members, memberById, activities, checklist, live,
+    messages, refreshMessages, unread, markRead,
     refresh, loadAll, go, tab, toast, tracker, signOut, isDemo: api.isDemo, ...themeCtl,
   };
 
@@ -157,7 +192,7 @@ function Splash({ text }) {
 }
 
 function Shell() {
-  const { tab, go, profile, group, tracker, isDemo, theme, setPref } = useApp();
+  const { tab, go, profile, group, tracker, isDemo, theme, setPref, unread } = useApp();
   const Screen = SCREENS[tab] || Home;
   const days = daysUntil(group?.trek_date);
   const now = new Date();
@@ -172,6 +207,7 @@ function Shell() {
             {NAV.map((n) => (
               <button key={n.id} className={`rail-btn${tab === n.id ? ' on' : ''}${n.id === 'track' ? ' rec' : ''}`} onClick={() => go(n.id)} aria-label={n.label} title={n.label}>
                 <Icon name={n.id === 'track' && recording ? 'pause' : n.icon} size={20} />
+                {n.id === 'chat' && unread.total > 0 && <span className="nav-badge">{unread.total}</span>}
                 <span className="rail-tip">{n.label}</span>
               </button>
             ))}
@@ -210,6 +246,10 @@ function Shell() {
               </button>
             )}
             <button className="pill pill-ink crew-pill" onClick={() => go('crew')}>{group?.name}</button>
+            <button className={`icon-btn mobile-only chat-top${tab === 'chat' ? ' on' : ''}`} onClick={() => go('chat')} aria-label="Chat">
+              <Icon name="chat" />
+              {unread.total > 0 && <span className="nav-badge">{unread.total}</span>}
+            </button>
             <button className="icon-btn mobile-only" onClick={() => setPref(theme === 'dark' ? 'light' : 'dark')} aria-label="Toggle theme">
               <Icon name={theme === 'dark' ? 'sun' : 'moon'} />
             </button>
@@ -222,7 +262,7 @@ function Shell() {
       </div>
 
       <nav className="bottom-nav">
-        {NAV.map((n) => (
+        {NAV.filter((n) => !n.topOnMobile).map((n) => (
           <button key={n.id} className={`bn-btn${tab === n.id ? ' on' : ''}${n.id === 'track' ? ' rec' : ''}${n.id === 'track' && recording ? ' live' : ''}`} onClick={() => go(n.id)}>
             <span className="bn-icon"><Icon name={n.id === 'track' && recording ? 'pause' : n.icon} size={n.id === 'track' ? 22 : 20} /></span>
             {n.id !== 'track' && <span>{n.label}</span>}

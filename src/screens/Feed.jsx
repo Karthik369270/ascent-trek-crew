@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '../lib/api/index.js';
 import { useApp } from '../lib/hooks.js';
-import { dateLabel, duration, km, metres, pace, timeAgo, TYPES } from '../lib/format.js';
+import { dateLabel, duration, km, metres, paceOrSpeed, timeAgo, TYPES } from '../lib/format.js';
 import { MiniRoute } from '../components/Charts.jsx';
 import { Avatar, Empty, Segmented } from '../components/bits.jsx';
 import Icon from '../components/Icon.jsx';
@@ -96,7 +96,7 @@ function ActivityCard({ a }) {
         {a.distance_m > 0 && <div><span>Distance</span><strong>{km(a.distance_m)} km</strong></div>}
         <div><span>Climb</span><strong>{metres(a.elevation_gain_m)} m</strong></div>
         <div><span>Time</span><strong>{duration(a.duration_s)}</strong></div>
-        {a.distance_m > 0 && <div><span>Pace</span><strong>{pace(a.distance_m, a.duration_s)}</strong></div>}
+        {a.distance_m > 0 && (() => { const p = paceOrSpeed(a.type, a.distance_m, a.duration_s); return <div><span>{p.label}</span><strong>{p.value}{a.type === 'cycle' && p.value !== '–' ? ' km/h' : ''}</strong></div>; })()}
       </div>
       {a.route && (
         showMap

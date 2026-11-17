@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react';
 import { api } from '../lib/api/index.js';
 import { clearRecovery, readRecovery, useApp } from '../lib/hooks.js';
-import { duration, km, metres, pace, timeAgo, TYPES } from '../lib/format.js';
+import { duration, km, metres, paceOrSpeed, timeAgo, TYPES } from '../lib/format.js';
 import { Segmented, Sheet } from '../components/bits.jsx';
 import Icon from '../components/Icon.jsx';
 import RouteMap from '../components/RouteMap.jsx';
 
-const GPS_TYPES = ['walk', 'run', 'hike'];
+const GPS_TYPES = ['walk', 'run', 'hike', 'cycle'];
 
 function defaultTitle(type, d = new Date()) {
   const h = d.getHours();
@@ -75,7 +75,7 @@ function GpsRecorder() {
 
       <section className="card span-5 rec-panel">
         {t.status === 'idle' && (
-          <div className="type-chips">
+          <div className="type-chips four">
             {GPS_TYPES.map((ty) => (
               <button key={ty} className={`type-chip${t.type === ty ? ' on' : ''}`} onClick={() => t.setType(ty)}>
                 <Icon name={TYPES[ty].icon} size={18} />{TYPES[ty].label}
@@ -93,7 +93,7 @@ function GpsRecorder() {
         <div className="rec-stats">
           <div><span className="rec-val">{km(t.distance_m)}</span><span className="muted small">km</span></div>
           <div><span className="rec-val">{metres(t.elevation_gain_m)}</span><span className="muted small">m climbed</span></div>
-          <div><span className="rec-val">{pace(t.distance_m, t.elapsed_s)}</span><span className="muted small">min / km</span></div>
+          {(() => { const p = paceOrSpeed(t.type, t.distance_m, t.elapsed_s); return <div><span className="rec-val">{p.value}</span><span className="muted small">{p.unit}</span></div>; })()}
         </div>
 
         <div className="rec-controls">
@@ -170,7 +170,7 @@ function SaveSheet({ summary, onClose, onSaved, profile, group }) {
       <div className="save-stats">
         <div><strong>{km(summary.distance_m)}</strong><span>km</span></div>
         <div><strong>{duration(summary.duration_s)}</strong><span>time</span></div>
-        <div><strong>{pace(summary.distance_m, summary.duration_s)}</strong><span>/km</span></div>
+        {(() => { const p = paceOrSpeed(summary.type, summary.distance_m, summary.duration_s); return <div><strong>{p.value}</strong><span>{p.unit === 'km/h' ? 'km/h' : '/km'}</span></div>; })()}
       </div>
       <div className="form">
         <label>Title<input value={title} onChange={(e) => setTitle(e.target.value)} maxLength={60} /></label>
@@ -229,7 +229,7 @@ function ManualLog() {
       <form className="card span-7 form" onSubmit={save}>
         <h3>What did you do?</h3>
         <div className="type-chips wrap">
-          {['stairs', 'incline', 'walk', 'run', 'hike', 'other'].map((ty) => (
+          {['stairs', 'incline', 'walk', 'run', 'hike', 'cycle', 'other'].map((ty) => (
             <button type="button" key={ty} className={`type-chip${type === ty ? ' on' : ''}`} onClick={() => setType(ty)}>
               <Icon name={TYPES[ty].icon} size={18} />{TYPES[ty].label}
             </button>

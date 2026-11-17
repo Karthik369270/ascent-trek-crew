@@ -45,13 +45,19 @@ export function startOfWeek(d = new Date()) {
 
 export const mine = (acts, uid) => acts.filter((a) => a.user_id === uid);
 
+// Kilometres that count toward distance targets, the distance board, "longest outing" and km badges.
+// Cycling still counts for climb, minutes, active days and streaks, but a 10 km ride isn't a 10 km walk.
+// To count cycling distance too, empty this list.
+export const DISTANCE_EXCLUDES = ['cycle'];
+export const footDistance = (a) => (DISTANCE_EXCLUDES.includes(a.type) ? 0 : a.distance_m || 0);
+
 export function sumBetween(acts, from, to = new Date(8.64e15)) {
   const out = { distance_m: 0, elevation_gain_m: 0, minutes: 0, count: 0, days: 0 };
   const days = new Set();
   for (const a of acts) {
     const t = new Date(a.started_at);
     if (t >= from && t < to) {
-      out.distance_m += a.distance_m || 0;
+      out.distance_m += footDistance(a);
       out.elevation_gain_m += a.elevation_gain_m || 0;
       out.minutes += (a.duration_s || 0) / 60;
       out.count++;
@@ -118,7 +124,7 @@ export function readiness(acts, uid, now = new Date()) {
   const total = recent.reduce((s, a) => s + (a.elevation_gain_m || 0), 0);
   const parts = [
     { key: 'elev', label: 'Weekly climbing', value: total / 3, target: T.weeklyElev, unit: 'm / week', weight: 40 },
-    { key: 'dist', label: 'Longest outing', value: Math.max(0, ...recent.map((a) => (a.distance_m || 0) / 1000)), target: T.longestKm, unit: 'km', weight: 20 },
+    { key: 'dist', label: 'Longest outing', value: Math.max(0, ...recent.map((a) => footDistance(a) / 1000)), target: T.longestKm, unit: 'km', weight: 20 },
     { key: 'climb', label: 'Biggest single climb', value: Math.max(0, ...recent.map((a) => a.elevation_gain_m || 0)), target: T.biggestClimb, unit: 'm', weight: 20 },
     { key: 'days', label: 'Active days (3 weeks)', value: daySet(recent).size, target: T.activeDays, unit: 'days', weight: 20 },
   ];
@@ -185,12 +191,12 @@ export function badges(acts, uid) {
   my.forEach((a) => { const k = startOfWeek(new Date(a.started_at)).getTime(); weeks[k] = (weeks[k] || 0) + (a.elevation_gain_m || 0); });
   const s = {
     count: my.length,
-    longest: Math.max(0, ...my.map((a) => a.distance_m || 0)),
+    longest: Math.max(0, ...my.map(footDistance)),
     biggestClimb: Math.max(0, ...my.map((a) => a.elevation_gain_m || 0)),
     bestWeekElev: Math.max(0, ...Object.values(weeks)),
     bestStreak: bestStreak(my),
     early: my.some((a) => new Date(a.started_at).getHours() < 6),
-    totalKm: my.reduce((t, a) => t + (a.distance_m || 0), 0) / 1000,
+    totalKm: my.reduce((t, a) => t + footDistance(a), 0) / 1000,
     totalElev: my.reduce((t, a) => t + (a.elevation_gain_m || 0), 0),
   };
   return BADGES.map((b) => ({ ...b, earned: b.test(s) }));

@@ -32,7 +32,7 @@ create table if not exists public.activities (
   id                uuid primary key default gen_random_uuid(),
   user_id           uuid not null references public.profiles(id) on delete cascade,
   group_id          uuid not null references public.groups(id) on delete cascade,
-  type              text not null check (type in ('walk','run','hike','stairs','incline','other')),
+  type              text not null,
   title             text,
   note              text,
   started_at        timestamptz not null,
@@ -44,6 +44,10 @@ create table if not exists public.activities (
   created_at        timestamptz not null default now()
 );
 create index if not exists activities_group_time on public.activities (group_id, started_at desc);
+-- Allowed activity types (re-created each run so new types like 'cycle' reach existing databases)
+alter table public.activities drop constraint if exists activities_type_check;
+alter table public.activities add constraint activities_type_check
+  check (type in ('walk','run','hike','cycle','stairs','incline','other'));
 
 create table if not exists public.kudos (
   activity_id uuid not null references public.activities(id) on delete cascade,
@@ -83,6 +87,17 @@ create table if not exists public.live_locations (
   lng         double precision not null,
   updated_at  timestamptz not null default now()
 );
+
+-- Chat: recipient_id null = crew chat (everyone in the crew), otherwise a private message between two members
+create table if not exists public.messages (
+  id            uuid primary key default gen_random_uuid(),
+  group_id      uuid not null references public.groups(id) on delete cascade,
+  sender_id     uuid not null references public.profiles(id) on delete cascade,
+  recipient_id  uuid references public.profiles(id) on delete cascade,
+  body          text not null check (char_length(body) between 1 and 1000),
+  created_at    timestamptz not null default now()
+);
+create index if not exists messages_group_time on public.messages (group_id, created_at desc);
 
 -- ── Helpers ──────────────────────────────────────────────────
 create or replace function public.my_group_id()
@@ -151,6 +166,7 @@ alter table public.comments        enable row level security;
 alter table public.checklist_items enable row level security;
 alter table public.checklist_ticks enable row level security;
 alter table public.live_locations  enable row level security;
+alter table public.messages        enable row level security;
 
 drop policy if exists "crew reads group" on public.groups;
 create policy "crew reads group" on public.groups for select using (id = public.my_group_id());
@@ -220,11 +236,25 @@ create policy "live update own" on public.live_locations for update
 drop policy if exists "live delete own" on public.live_locations;
 create policy "live delete own" on public.live_locations for delete using (user_id = auth.uid());
 
+-- Crew chat is visible to the whole crew; a private message only to its sender and recipient
+drop policy if exists "read crew chat and own dms" on public.messages;
+create policy "read crew chat and own dms" on public.messages for select
+  using (group_id = public.my_group_id()
+         and (recipient_id is null or sender_id = auth.uid() or recipient_id = auth.uid()));
+drop policy if exists "send message" on public.messages;
+create policy "send message" on public.messages for insert
+  with check (sender_id = auth.uid() and group_id = public.my_group_id()
+              and (recipient_id is null
+                   or (recipient_id <> auth.uid()
+                       and exists (select 1 from public.profiles p where p.id = recipient_id and p.group_id = public.my_group_id()))));
+drop policy if exists "delete own message" on public.messages;
+create policy "delete own message" on public.messages for delete using (sender_id = auth.uid());
+
 -- ── Realtime: push changes to everyone's app instantly ──────
 do $$
 declare t text;
 begin
-  foreach t in array array['activities','kudos','comments','checklist_items','checklist_ticks','live_locations','profiles','groups'] loop
+  foreach t in array array['activities','kudos','comments','checklist_items','checklist_ticks','live_locations','profiles','groups','messages'] loop
     begin
       execute format('alter publication supabase_realtime add table public.%I', t);
     exception when duplicate_object then null;

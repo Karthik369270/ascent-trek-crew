@@ -18,12 +18,14 @@ export function simplify(points, max = 600) {
 }
 
 const MAX_ACCURACY_M = 35;     // ignore fixes worse than this
-const MAX_SPEED_MS = 12;       // ~43 km/h: anything faster is a GPS jump
+const MAX_SPEED_MS = 12;       // ~43 km/h: anything faster is a GPS jump (on foot)
+export const MAX_SPEED_CYCLE_MS = 25; // ~90 km/h when cycling (fast descents are real)
 const CLIMB_STEP_M = 4;        // hysteresis so altitude noise isn't counted as climbing
 
 export class GpsTracker {
   constructor(onChange) {
     this.onChange = onChange;
+    this.maxSpeed = MAX_SPEED_MS;
     this.reset();
   }
 
@@ -153,7 +155,7 @@ export class GpsTracker {
       const d = haversine(this.last, pt);
       if (d < Math.max(3, accuracy * 0.4)) return this.emit(); // standing still / jitter
       const dt = (pt.t - this.last.t) / 1000;
-      if (dt > 0 && d / dt > MAX_SPEED_MS) return this.emit(); // teleport glitch
+      if (dt > 0 && d / dt > this.maxSpeed) return this.emit(); // teleport glitch
       this.distance += d;
     }
 

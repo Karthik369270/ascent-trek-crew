@@ -19,6 +19,8 @@ const paths = {
   heart: <path d="M12 20s-7.5-4.6-7.5-10.2A4.3 4.3 0 0 1 12 7a4.3 4.3 0 0 1 7.5 2.8C19.5 15.4 12 20 12 20z" />,
   heartFill: <path d="M12 20s-7.5-4.6-7.5-10.2A4.3 4.3 0 0 1 12 7a4.3 4.3 0 0 1 7.5 2.8C19.5 15.4 12 20 12 20z" {...fill} />,
   comment: <path d="M4.5 5.5h15v10.5H10l-5.5 4z" />,
+  bike: <><circle cx="6" cy="16" r="3.5" /><circle cx="18" cy="16" r="3.5" /><path d="M6 16l3.5-7h6L18 16M9.5 9 12 16h-1M14 6h2.5l-1 3" /></>,
+  chat: <><path d="M3.5 4.5h12.5v9H8.5l-5 3.5z" /><path d="M16 8.5h4.5v9.5l-3.5-2.5H10v-2" /></>,
   trash: <><path d="M4 7h16M10 11v6M14 11v6" /><path d="M6 7l1 13h10l1-13M9 7V4h6v3" /></>,
   check: <path d="M5 12.5 10 17 19 7" />,
   map: <><path d="M9 4 3 6v14l6-2 6 2 6-2V4l-6 2z" /><path d="M9 4v14M15 6v14" /></>,
