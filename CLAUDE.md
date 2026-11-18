@@ -44,10 +44,11 @@ src/lib/api/localApi.js      demo backend (localStorage), same function signatur
 src/lib/api/demoSeed.js      seeded fake 5-person crew + ~35 days of activities
 src/lib/geo.js               GpsTracker class (filtering, elevation smoothing, pause/resume), haversine, simplify
 src/lib/chat.js              chat thread keys + unread counts (read-up-to times per device in localStorage)
-src/lib/calls.js             useCallController (call state at App level), Daily + demo engines, ringtones, callThreadKey
+src/lib/calls.js             useCallController (call state at App level), Agora + demo engines, ringtones, callThreadKey
 src/components/CallLayer.jsx incoming-call screen, call screen (grid / 1-to-1 + self view), minimised pill, add-people sheet
-api/daily-room.js            Vercel serverless function: verifies the Supabase user via call_token_info, creates a private
-                             Daily room `ascent-<callId>`, returns { url, token }. Needs DAILY_API_KEY (server-only)
+api/call-token.js            Vercel serverless function: verifies the Supabase user via call_token_info, returns an Agora
+                             token for channel `ascent-<callId>` with the Supabase user id as the Agora user account.
+                             Needs AGORA_APP_ID + AGORA_APP_CERTIFICATE (server-only); uses the `agora-token` package
 src/lib/stats.js             all fitness maths: totals, streaks, readiness, leaderboard, badges, PLAN, TREK profile
 src/lib/format.js            number/date/pace formatting, TYPES (activity types), shareText()
 src/components/Icon.jsx      inline SVG icon set (`<Icon name="..."/>`) — add new icons here, don't add an icon library
@@ -143,7 +144,7 @@ Rules:
 VITE_SUPABASE_URL=
 VITE_SUPABASE_ANON_KEY=
 ```
-Server-only (Vercel env, never `VITE_`): `DAILY_API_KEY` for calls.
+Server-only (Vercel env, never `VITE_`): `AGORA_APP_ID`, `AGORA_APP_CERTIFICATE` for calls.
 Empty values → app runs in demo mode only.
 
 ## Deployment
@@ -160,7 +161,8 @@ worker auto-updates clients. Full steps are in `README.md` — keep it in sync w
 - Nudges use `navigator.share` / WhatsApp link, not push notifications. Web push would need a service-worker push
   handler + a Supabase Edge Function — not built yet.
 - Chat unread counts are per device (localStorage), not synced; no notifications while the app is closed.
-- Calls: Daily.co (`@daily-co/daily-js`, lazy-loaded), our own UI. Phones only ring while the app is open (no push).
+- Calls: Agora (`agora-rtc-sdk-ng`, ~1.5 MB, lazy-loaded and excluded from the PWA precache), our own UI. Chosen over
+  Daily.co because Daily's free plan now wants a card. Video is 360p to go easy on mobile data. Phones only ring while the app is open (no push).
   A ring lasts 45 s (`RING_MS`). Crashed clients may stay "joined"; starting/joining another call clears that, and
   calls older than 6 h count as over. `/api` only runs on Vercel or `vercel dev`, not `npm run dev`.
   Demo mode fakes calls (crewmates "answer" on a timer; "Demo: get a test call" in the chat list).

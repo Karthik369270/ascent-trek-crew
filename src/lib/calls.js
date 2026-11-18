@@ -1,5 +1,5 @@
 // Voice/video calls. Who-is-ringing-whom lives in the database (calls + call_members, pushed by realtime);
-// the actual audio/video goes through Daily.co. In demo mode there's no Daily: you see your own camera and
+// the actual audio/video goes through Agora. In demo mode there's no Agora: you see your own camera and
 // crewmates appear as avatars.
 import { useCallback, useEffect, useRef, useState } from 'react';
 
@@ -54,33 +54,89 @@ function tone(kind) {
   return () => { stopped = true; clearInterval(iv); timers.forEach(clearTimeout); try { navigator.vibrate?.(0); } catch { /* ignore */ } };
 }
 
-// ── Engines: one talks to Daily, one fakes it for the demo ──
-async function dailyEngine(onChange) {
-  const { default: Daily } = await import('@daily-co/daily-js'); // only downloaded when a call starts
-  const co = Daily.getCallInstance?.() || Daily.createCallObject({ subscribeToTracksAutomatically: true });
-  let speaker = null;
-  const playable = (t) => (t?.state === 'playable' ? t.persistentTrack : null);
-  const emit = () => onChange(Object.values(co.participants()).map((p) => ({
-    key: p.session_id,
-    userId: p.user_id,
-    name: p.user_name,
-    local: p.local,
-    video: playable(p.tracks?.video),
-    audio: p.local ? null : playable(p.tracks?.audio),
-    mic: !['off', 'blocked'].includes(p.tracks?.audio?.state),
-    speaking: !p.local && p.session_id === speaker,
-  })));
-  ['joined-meeting', 'participant-joined', 'participant-updated', 'participant-left', 'track-started', 'track-stopped'].forEach((e) => co.on(e, emit));
-  co.on('active-speaker-change', (e) => { speaker = e?.activeSpeaker?.peerId; emit(); });
+// ── Engines: one talks to Agora, one fakes it for the demo ──
+// Everyone joins the channel with their Supabase user id as their Agora id, so remote people map straight to crew members.
+async function agoraEngine(onChange) {
+  const { default: AgoraRTC } = await import('agora-rtc-sdk-ng'); // only downloaded when a call starts
+  AgoraRTC.setLogLevel(3); // errors only
+  const client = AgoraRTC.createClient({ mode: 'rtc', codec: 'vp8' });
+  const handlers = {};
+  const fire = (ev, arg) => handlers[ev]?.(arg);
+  let mic = null, cam = null, micOn = true, camOn = false, speaker = null, me = null;
+
+  const emit = () => onChange([
+    { key: 'me', userId: me, local: true, video: camOn && cam ? cam.getMediaStreamTrack() : null, mic: micOn },
+    ...client.remoteUsers.map((u) => ({
+      key: String(u.uid),
+      userId: String(u.uid),
+      local: false,
+      video: u.hasVideo && u.videoTrack ? u.videoTrack.getMediaStreamTrack() : null,
+      mic: u.hasAudio,
+      speaking: String(u.uid) === speaker,
+    })),
+  ]);
+
+  client.on('user-published', async (user, type) => {
+    try {
+      await client.subscribe(user, type);
+      if (type === 'audio') user.audioTrack?.play(); // remote voices play straight to the speaker
+    } catch { /* they left again */ }
+    emit();
+  });
+  ['user-unpublished', 'user-joined', 'user-left'].forEach((e) => client.on(e, emit));
+  client.enableAudioVolumeIndicator();
+  client.on('volume-indicator', (vols) => {
+    const loud = vols.filter((v) => v.level > 5 && String(v.uid) !== me).sort((a, b) => b.level - a.level)[0];
+    speaker = loud ? String(loud.uid) : null;
+    emit();
+  });
+  client.on('connection-state-change', (state, _prev, reason) => {
+    if (state === 'DISCONNECTED' && reason !== 'LEAVE') fire('error', { errorMsg: 'The call dropped (connection lost)' });
+  });
+
+  async function startCam() {
+    try {
+      cam = await AgoraRTC.createCameraVideoTrack({ encoderConfig: '360p_7', facingMode: 'user' }); // light on mobile data
+      await client.publish(cam);
+      camOn = true;
+    } catch {
+      cam?.close(); cam = null; camOn = false;
+      fire('camera-error');
+    }
+  }
+
   return {
-    async join({ url, token, video }) { await co.join({ url, token, startVideoOff: !video, startAudioOff: false }); emit(); },
-    setMic: (b) => co.setLocalAudio(b),
-    setCam: (b) => co.setLocalVideo(b),
-    flip: () => co.cycleCamera?.(),
-    on: (ev, fn) => co.on(ev, fn),
+    async join({ appId, channel, token, uid, video }) {
+      me = uid;
+      await client.join(appId, channel, token, uid);
+      try {
+        mic = await AgoraRTC.createMicrophoneAudioTrack();
+        await client.publish(mic);
+      } catch { micOn = false; fire('camera-error'); }
+      if (video) await startCam();
+      emit();
+    },
+    async setMic(b) { micOn = b; await mic?.setMuted(!b); emit(); },
+    async setCam(b) {
+      if (b && !cam) await startCam();
+      else if (cam) { await cam.setEnabled(b); camOn = b; }
+      emit();
+    },
+    async flip() {
+      if (!cam) return;
+      try {
+        const cams = await AgoraRTC.getCameras();
+        if (cams.length < 2) return;
+        const i = cams.findIndex((c) => c.label === cam.getTrackLabel());
+        await cam.setDevice(cams[(i + 1) % cams.length].deviceId);
+        emit();
+      } catch { /* only one camera */ }
+    },
+    on(ev, fn) { handlers[ev] = fn; },
     async leave() {
-      try { await co.leave(); } catch { /* already left */ }
-      try { await co.destroy(); } catch { /* already gone */ }
+      mic?.close(); cam?.close();
+      try { await client.leave(); } catch { /* already left */ }
+      fire('left-meeting');
     },
   };
 }
@@ -150,7 +206,7 @@ export function useCallController({ api, profile, group, memberById, calls, refr
     setCam(video);
     try {
       const cred = await api.getCallToken(id);
-      const e = await (cred.demo ? demoEngine : dailyEngine)(setParts, profile);
+      const e = await (cred.demo ? demoEngine : agoraEngine)(setParts, profile);
       if (curRef.current?.id !== id) { e.leave(); return; } // hung up while connecting
       engine.current = e;
       e.on('left-meeting', () => finish('left'));
@@ -230,7 +286,7 @@ export function useCallController({ api, profile, group, memberById, calls, refr
     return () => window.removeEventListener('pagehide', bye);
   }, [api]);
 
-  // What to draw: people in the call (Daily), plus people still ringing / connecting from the database
+  // What to draw: people in the call (Agora), plus people still ringing / connecting from the database
   const tiles = (() => {
     if (!cur) return [];
     const list = [];

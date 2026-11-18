@@ -175,7 +175,7 @@ export async function deleteMessage(id) {
   must(await supabase.from('messages').delete().eq('id', id));
 }
 
-// ── Calls (signalling here; audio/video runs on Daily.co) ───
+// ── Calls (signalling here; audio/video runs on Agora) ──────
 // Calls since `sinceIso`, newest first, each with members: [{ user_id, status, updated_at, invited_by }]
 export async function getCalls(groupId, sinceIso) {
   const rows = must(
@@ -198,17 +198,17 @@ export async function respondToCall(callId, status) {
   must(await supabase.rpc('call_respond', { p_call: callId, p_status: status }));
 }
 
-// Asks our server function (api/daily-room.js) for the Daily room URL + a token for this call
+// Asks our server function (api/call-token.js) for an Agora token for this call
 export async function getCallToken(callId) {
   const { data } = await supabase.auth.getSession();
-  const res = await fetch('/api/daily-room', {
+  const res = await fetch('/api/call-token', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${data.session?.access_token || ''}` },
     body: JSON.stringify({ callId }),
   });
   const out = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(out.error || `Could not connect the call (${res.status})`);
-  return out; // { url, token }
+  return out; // { appId, channel, token, uid }
 }
 
 // ── Realtime ────────────────────────────────────────────────

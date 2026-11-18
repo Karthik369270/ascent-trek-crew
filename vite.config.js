@@ -3,6 +3,7 @@ import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
 
 export default defineConfig({
+  build: { chunkSizeWarningLimit: 1700 }, // the big chunk is Agora's call library, loaded only during calls
   plugins: [
     react(),
     VitePWA({
@@ -25,6 +26,8 @@ export default defineConfig({
       },
       workbox: {
         globPatterns: ['**/*.{js,css,html,svg,png,woff2}'],
+        // Agora's call library (~1.5 MB) is only fetched when someone starts or answers a call
+        globIgnores: ['**/AgoraRTC*.js'],
         navigateFallback: '/index.html',
         navigateFallbackDenylist: [/^\/api\//],
       },

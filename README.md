@@ -62,19 +62,20 @@ Netlify or Cloudflare Pages work the same way (build `npm run build`, publish `d
 When you push changes to GitHub later, Vercel redeploys automatically, and the app on everyone's phone updates itself
 the next time they open it.
 
-## 3b. Turn on calls (Daily.co, free, ~3 minutes)
+## 3b. Turn on calls (Agora, free, ~3 minutes, no card needed)
 
-Voice and video calls run on Daily.co. The free plan includes 10,000 participant-minutes a month
-(an 8-person, 30-minute call uses 240).
+Voice and video calls run on Agora. The free account includes 10,000 minutes a month (counted per person, so an
+8-person, 30-minute call uses 240). With no card on file, going over just pauses calls until next month; nothing is charged.
 
-1. Sign up at https://dashboard.daily.co and open **Developers** to copy your **API key**.
-2. In Vercel → your project → **Settings → Environment Variables**, add `DAILY_API_KEY` with that key.
-   No `VITE_` prefix: the key must stay on the server and never reach the browser.
-3. Redeploy (Deployments → ⋯ → Redeploy), or just push a change.
-4. Make sure you've re-run `supabase/schema.sql` (it adds the `calls` tables).
+1. Sign up at https://console.agora.io and create a project in **Secured mode: APP ID + Token**.
+2. From the project page copy the **App ID** and the **Primary Certificate**. (Ignore the "Chat" product there.)
+3. In Vercel → your project → **Settings → Environment Variables**, add `AGORA_APP_ID` and `AGORA_APP_CERTIFICATE`.
+   No `VITE_` prefix: the certificate must stay on the server and never reach the browser.
+4. Redeploy (Deployments → ⋯ → Redeploy), or just push a change.
+5. Make sure you've re-run `supabase/schema.sql` (it adds the `calls` tables).
 
-How it works: `api/daily-room.js` is a small Vercel server function. It checks the person is signed in and allowed
-into the call, creates a private Daily room for it, and hands back a short-lived token. Ringing, "add people" and the
+How it works: `api/call-token.js` is a small Vercel server function. It checks the person is signed in and allowed
+into the call, and hands back a short-lived Agora token for that call only. Ringing, "add people" and the
 call log in chat go through Supabase realtime.
 
 Limits: a phone only rings while the app is open (there are no push notifications yet). Calls don't work under
@@ -129,8 +130,8 @@ src/lib/geo.js             GPS recorder with filtering + elevation smoothing
 src/lib/stats.js           readiness, streaks, leaderboard, badges, plan, crew climb, trek profile
 src/lib/hooks.js           theme (light/dark/auto), wake lock, recording state
 src/screens/               Home, Track, Feed, Crew, Chat, Plan, Profile, Auth, Onboarding
-src/lib/calls.js           call state, ringing, Daily.co connection (components/CallLayer.jsx draws the call screens)
-api/daily-room.js          Vercel server function: checks the caller, returns a Daily room + token
+src/lib/calls.js           call state, ringing, Agora connection (components/CallLayer.jsx draws the call screens)
+api/call-token.js          Vercel server function: checks the caller, returns an Agora token
 src/components/            charts (lollipop, mountain profile, pill sliders), map, icons
 src/styles.css             all styling; colour tokens for light + dark at the top
 ```
