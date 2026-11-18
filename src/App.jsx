@@ -3,6 +3,8 @@ import { api, getMode, hasSupabase, setMode } from './lib/api/index.js';
 import { AppContext, useApp, useTheme, useTrackerController } from './lib/hooks.js';
 import { addDays, daysUntil, startOfDay } from './lib/stats.js';
 import { firstRunSince, loadRead, saveRead, threadKeyOf, unreadCounts } from './lib/chat.js';
+import { useCallController } from './lib/calls.js';
+import CallLayer from './components/CallLayer.jsx';
 import Icon from './components/Icon.jsx';
 import { Avatar } from './components/bits.jsx';
 import Auth from './screens/Auth.jsx';
@@ -27,6 +29,9 @@ const NAV = [
 ];
 const TITLES = { home: null, track: 'Record', feed: 'Crew feed', crew: 'Crew', chat: 'Chat', plan: 'Trek plan', profile: 'You' };
 
+// Calls shown in chat history go back 30 days
+const callsSince = () => addDays(startOfDay(), -30).toISOString();
+
 function readTab() {
   const t = location.hash.replace('#', '').split('/')[0];
   return SCREENS[t] ? t : 'home';
@@ -42,6 +47,7 @@ export default function App() {
   const [checklist, setChecklist] = useState({ items: [], ticks: [] });
   const [live, setLive] = useState([]);
   const [messages, setMessages] = useState([]);
+  const [calls, setCalls] = useState([]);
   const [chatRead, setChatRead] = useState({});
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState(readTab);
@@ -85,11 +91,12 @@ export default function App() {
   // ── Data ──────────────────────────────────────────────────
   const loadCrew = useCallback(async (groupId) => {
     const since = addDays(startOfDay(), -120).toISOString();
-    const [g, m, a, c, l, msgs] = await Promise.all([
+    const [g, m, a, c, l, msgs, cl] = await Promise.all([
       api.getGroup(groupId), api.getMembers(groupId), api.getActivities(groupId, since), api.getChecklist(groupId), api.getLiveLocations(groupId),
       api.getMessages(groupId).catch(() => []), // [] if the database hasn't got the messages table yet
+      api.getCalls(groupId, callsSince()).catch(() => []),
     ]);
-    setGroup(g); setMembers(m); setActivities(a); setChecklist(c); setLive(l); setMessages(msgs);
+    setGroup(g); setMembers(m); setActivities(a); setChecklist(c); setLive(l); setMessages(msgs); setCalls(cl);
   }, []);
 
   const loadAll = useCallback(async () => {
@@ -123,6 +130,7 @@ export default function App() {
   }, [groupId, loadCrew]);
 
   const refresh = useCallback(() => (groupId ? loadCrew(groupId) : loadAll()), [groupId, loadCrew, loadAll]);
+  const refreshCalls = useCallback(() => (groupId ? api.getCalls(groupId, callsSince()).then(setCalls).catch(() => {}) : Promise.resolve()), [groupId]);
   const refreshMessages = useCallback(() => (groupId ? api.getMessages(groupId).then(setMessages) : Promise.resolve()), [groupId]);
 
   // ── Chat unread tracking (per device) ─────────────────────
@@ -151,19 +159,21 @@ export default function App() {
   }, [uid, messages]);
   const unread = useMemo(() => unreadCounts(messages, uid, chatRead), [messages, uid, chatRead]);
 
+  const memberById = useMemo(() => Object.fromEntries(members.map((m) => [m.id, m])), [members]);
+  const call = useCallController({ api, profile, group, memberById, calls, refreshCalls, toast });
+
   const signOut = useCallback(async () => {
     if (tracker.status !== 'idle') tracker.discard();
+    if (call.cur) await call.hangup();
     await api.signOut();
     if (getMode() === 'demo' && hasSupabase) { setMode('live'); location.hash = ''; location.reload(); return; }
     setProfile(null); setGroup(null); setMembers([]); setActivities([]);
     location.hash = '';
-  }, [tracker]);
-
-  const memberById = useMemo(() => Object.fromEntries(members.map((m) => [m.id, m])), [members]);
+  }, [tracker, call]);
 
   const ctx = {
     user, profile, setProfile, group, setGroup, members, memberById, activities, checklist, live,
-    messages, refreshMessages, unread, markRead,
+    messages, refreshMessages, unread, markRead, calls, call,
     refresh, loadAll, go, tab, toast, tracker, signOut, isDemo: api.isDemo, ...themeCtl,
   };
 
@@ -269,6 +279,7 @@ function Shell() {
           </button>
         ))}
       </nav>
+      <CallLayer />
     </div>
   );
 }

@@ -12,6 +12,7 @@ function load() {
   try { s = JSON.parse(localStorage.getItem(KEY) || 'null'); } catch { s = null; }
   if (!s) { s = makeSeed(); persist(s); }
   if (!s.messages) s.messages = []; // demo data saved before chat existed
+  if (!s.calls) s.calls = [];
   return s;
 }
 function persist(s) {
@@ -155,6 +156,87 @@ export async function sendMessage(groupId, senderId, recipientId, body) {
   });
 }
 export async function deleteMessage(id) { mutate((s) => { s.messages = s.messages.filter((m) => m.id !== id); }); }
+
+// ── Calls (demo: no real audio/video; crewmates "answer" on a timer) ──
+const canSeeCall = (s, c) => c.recipient_id == null || c.created_by === s.me || c.recipient_id === s.me || c.members.some((m) => m.user_id === s.me);
+const now = () => new Date().toISOString();
+function setMember(c, userId, status, by) {
+  const m = c.members.find((x) => x.user_id === userId);
+  if (m) Object.assign(m, { status, updated_at: now() });
+  else c.members.push({ user_id: userId, status, updated_at: now(), invited_by: by });
+}
+function wrapup(c) {
+  if (c.members.some((m) => m.status === 'joined')) return;
+  c.ended_at = c.ended_at || now();
+  c.members.forEach((m) => { if (m.status === 'ringing') Object.assign(m, { status: 'missed', updated_at: now() }); });
+}
+// Pretend some of the people rung pick up a few seconds later
+function demoAnswer(callId, userIds) {
+  userIds.forEach((u, i) => setTimeout(() => mutate((s) => {
+    const c = s.calls.find((x) => x.id === callId);
+    const m = c?.members.find((x) => x.user_id === u);
+    if (!c || c.ended_at || m?.status !== 'ringing') return;
+    const pickUp = i < 3 || Math.random() < 0.5;
+    setMember(c, u, pickUp ? 'joined' : 'declined');
+    if (pickUp) c.answered_at = c.answered_at || now();
+  }), 2500 + i * 1800));
+}
+
+export async function getCalls(groupId, sinceIso) {
+  const s = load();
+  return delay(clone(
+    s.calls.filter((c) => c.group_id === groupId && c.created_at >= sinceIso && canSeeCall(s, c))
+      .sort((a, b) => b.created_at.localeCompare(a.created_at))
+  ));
+}
+export async function startCall(groupId, recipientId, video, inviteIds) {
+  const id = mutate((s) => {
+    s.calls.forEach((c) => { const m = c.members.find((x) => x.user_id === s.me && x.status === 'joined'); if (m) { m.status = 'left'; wrapup(c); } });
+    const others = recipientId ? [recipientId] : s.profiles.filter((p) => p.group_id === groupId && p.id !== s.me && (!inviteIds || inviteIds.includes(p.id))).map((p) => p.id);
+    const c = { id: uid(), group_id: groupId, created_by: s.me, recipient_id: recipientId || null, video: !!video, created_at: now(), answered_at: null, ended_at: null, members: [] };
+    setMember(c, s.me, 'joined', s.me);
+    others.forEach((u) => setMember(c, u, 'ringing', s.me));
+    s.calls.push(c);
+    return { id: c.id, others };
+  });
+  demoAnswer(id.id, id.others);
+  return id.id;
+}
+export async function inviteToCall(callId, userIds) {
+  mutate((s) => {
+    const c = s.calls.find((x) => x.id === callId);
+    userIds.forEach((u) => { const m = c.members.find((x) => x.user_id === u); if (m?.status !== 'joined' && u !== s.me) setMember(c, u, 'ringing', s.me); });
+  });
+  demoAnswer(callId, userIds);
+}
+export async function respondToCall(callId, status) {
+  mutate((s) => {
+    const c = s.calls.find((x) => x.id === callId);
+    if (!c) throw new Error('Call not found');
+    if (status === 'joined' && c.ended_at) throw new Error('This call has ended');
+    setMember(c, s.me, status, s.me);
+    if (status === 'joined' && c.created_by !== s.me) c.answered_at = c.answered_at || now();
+    if (status !== 'joined') {
+      wrapup(c);
+      // In the demo the others hang up when you do, so calls don't stay "in progress" forever
+      if (status === 'left' && !c.ended_at) { c.members.forEach((m) => { if (m.status === 'joined') m.status = 'left'; }); wrapup(c); }
+    }
+  });
+}
+export async function getCallToken() { return { demo: true }; }
+
+// Demo only: a crewmate rings you, so the incoming-call screen can be tried
+export async function simulateIncomingCall(video = true) {
+  mutate((s) => {
+    const me = s.profiles.find((p) => p.id === s.me);
+    const from = s.profiles.find((p) => p.group_id === me.group_id && p.id !== s.me);
+    if (!from) return;
+    const c = { id: uid(), group_id: me.group_id, created_by: from.id, recipient_id: s.me, video, created_at: now(), answered_at: null, ended_at: null, members: [] };
+    setMember(c, from.id, 'joined', from.id);
+    setMember(c, s.me, 'ringing', from.id);
+    s.calls.push(c);
+  });
+}
 
 export function subscribe(_groupId, cb) {
   dataListeners.add(cb);

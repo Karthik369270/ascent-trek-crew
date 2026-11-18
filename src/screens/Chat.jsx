@@ -2,7 +2,8 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../lib/api/index.js';
 import { useApp } from '../lib/hooks.js';
 import { threadKeyOf } from '../lib/chat.js';
-import { Avatar, Empty } from '../components/bits.jsx';
+import { callThreadKey, fmtDuration, isLiveCall, memberOf } from '../lib/calls.js';
+import { Avatar, AvatarStack, Empty, Sheet } from '../components/bits.jsx';
 import Icon from '../components/Icon.jsx';
 
 // The open conversation lives in the URL (#chat/crew or #chat/<member id>) so the phone's back button works.
@@ -33,7 +34,7 @@ function dayHeading(iso) {
 }
 
 export default function Chat() {
-  const { messages, members, profile, group, unread } = useApp();
+  const { messages, members, profile, group, unread, isDemo } = useApp();
   const [thread, setThread] = useState(readThread);
   const me = profile.id;
 
@@ -79,6 +80,11 @@ export default function Chat() {
             avatar={<Avatar person={m} size={42} />} name={m.name} msg={last[m.id]}
           />
         ))}
+        {isDemo && (
+          <button className="pill pill-plain demo-call" onClick={() => api.simulateIncomingCall(true)}>
+            <Icon name="phone" size={14} /> Demo: get a test call
+          </button>
+        )}
       </section>
       <Conversation key={active} threadKey={active} onBack={() => open(null)} />
     </div>
@@ -110,7 +116,7 @@ function ThreadRow({ on, onClick, avatar, name, msg, unread, showSender }) {
 }
 
 function Conversation({ threadKey, onBack }) {
-  const { messages, memberById, profile, group, refreshMessages, markRead, toast } = useApp();
+  const { messages, memberById, members, profile, group, refreshMessages, markRead, toast, calls, call } = useApp();
   const me = profile.id;
   const isCrew = threadKey === 'crew';
   const other = isCrew ? null : memberById[threadKey];
@@ -118,6 +124,18 @@ function Conversation({ threadKey, onBack }) {
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
   const [picked, setPicked] = useState(null);
+  const [crewPick, setCrewPick] = useState(null); // null, or { video } while choosing who to ring
+  const threadCalls = calls.filter((c) => callThreadKey(c, me) === threadKey);
+  const liveCall = threadCalls.find((c) => isLiveCall(c) && memberOf(c, me)?.status !== 'joined');
+  const inThisCall = call.cur && threadCalls.some((c) => c.id === call.cur.id);
+  // Messages and call log lines, oldest first
+  const items = [...list.map((m) => ({ kind: 'msg', at: m.created_at, m })), ...threadCalls.map((c) => ({ kind: 'call', at: c.created_at, c }))]
+    .sort((a, b) => new Date(a.at) - new Date(b.at));
+
+  function ring(video) {
+    if (isCrew) setCrewPick({ video });
+    else call.start(threadKey, video);
+  }
   const box = useRef(null);
   const input = useRef(null);
 
@@ -125,7 +143,7 @@ function Conversation({ threadKey, onBack }) {
   useEffect(() => { markRead(threadKey); }, [threadKey, list.length, markRead]);
   useLayoutEffect(() => {
     if (box.current) box.current.scrollTop = box.current.scrollHeight;
-  }, [threadKey, list.length]);
+  }, [threadKey, items.length]);
 
   async function send(e) {
     e.preventDefault();
@@ -170,15 +188,49 @@ function Conversation({ threadKey, onBack }) {
           <strong>{isCrew ? group.name || 'Crew chat' : other.name}</strong>
           <span className="muted small">{isCrew ? 'Everyone in the crew sees this' : `Only you and ${other.name} see this`}</span>
         </div>
+        <div className="chat-call-btns">
+          <button className="icon-btn" onClick={() => ring(false)} disabled={!!call.cur} aria-label="Voice call" title="Voice call"><Icon name="phone" /></button>
+          <button className="icon-btn" onClick={() => ring(true)} disabled={!!call.cur} aria-label="Video call" title="Video call"><Icon name="video" /></button>
+        </div>
       </header>
 
+      {liveCall && !call.cur && (
+        <div className="call-banner">
+          <span className="grow">
+            <Icon name={liveCall.video ? 'video' : 'phone'} size={16} />
+            {liveCall.video ? 'Video' : 'Voice'} call in progress
+            <AvatarStack people={liveCall.members.filter((m) => m.status === 'joined').map((m) => memberById[m.user_id]).filter(Boolean)} size={22} />
+          </span>
+          <button className="pill pill-ink" onClick={() => call.join(liveCall)}>Join</button>
+        </div>
+      )}
+      {inThisCall && call.cur.minimized && (
+        <div className="call-banner">
+          <span className="grow"><Icon name="phone" size={16} /> You are in this call</span>
+          <button className="pill pill-ink" onClick={() => call.minimize(false)}>Return</button>
+        </div>
+      )}
+
       <div className="chat-msgs" ref={box}>
-        {list.length === 0 && (
+        {items.length === 0 && (
           <Empty icon="chat" title="Say hello">
             {isCrew ? 'Plan a stair session, share a tip, or cheer someone on.' : `Start a private chat with ${other.name}.`}
           </Empty>
         )}
-        {list.map((m) => {
+        {items.map((it) => {
+          if (it.kind === 'call') {
+            const day = dayHeading(it.at);
+            const newDay = day !== lastDay;
+            lastDay = day;
+            prev = null;
+            return (
+              <div key={`call-${it.c.id}`} className="msg-wrap">
+                {newDay && <div className="chat-day">{day}</div>}
+                <CallLog c={it.c} me={me} />
+              </div>
+            );
+          }
+          const m = it.m;
           const day = dayHeading(m.created_at);
           const newDay = day !== lastDay;
           lastDay = day;
@@ -215,6 +267,12 @@ function Conversation({ threadKey, onBack }) {
         />
         <button className="icon-btn lime chat-send" disabled={!text.trim() || sending} aria-label="Send"><Icon name="send" size={18} /></button>
       </form>
+      {isCrew && (
+        <CrewCallPicker
+          pick={crewPick} onClose={() => setCrewPick(null)} people={members.filter((m) => m.id !== me)}
+          onStart={(ids) => { call.start(null, crewPick.video, ids); setCrewPick(null); }}
+        />
+      )}
     </section>
   );
 }
@@ -224,5 +282,58 @@ function BackBtn({ onBack }) {
     <button className="icon-btn chat-back" onClick={onBack} aria-label="Back to conversations">
       <Icon name="chevron" style={{ transform: 'rotate(180deg)' }} />
     </button>
+  );
+}
+
+// One line in the chat for each call: "Video call · 4:12", "Missed voice call", "no answer"
+function CallLog({ c, me }) {
+  const { memberById } = useApp();
+  const kind = c.video ? 'video' : 'voice';
+  const Kind = c.video ? 'Video' : 'Voice';
+  const mine = memberOf(c, me);
+  const iStarted = c.created_by === me;
+  let text;
+  let missed = false;
+  if (isLiveCall(c)) text = `${Kind} call in progress`;
+  else if (iStarted && !c.answered_at) text = `${Kind} call · no answer`;
+  else if (!iStarted && mine && mine.status !== 'left' && mine.status !== 'joined') {
+    missed = mine.status !== 'declined';
+    text = mine.status === 'declined' ? `Declined ${kind} call` : `Missed ${kind} call`;
+  } else {
+    const secs = c.answered_at && c.ended_at ? (new Date(c.ended_at) - new Date(c.answered_at)) / 1000 : null;
+    text = `${Kind} call${secs != null ? ` · ${fmtDuration(secs)}` : ''}`;
+  }
+  const who = !c.recipient_id && !iStarted ? memberById[c.created_by]?.name : null;
+  return (
+    <div className={`call-log${missed ? ' missed' : ''}`}>
+      <Icon name={c.video ? 'video' : 'phone'} size={15} />
+      <span>{text}</span>
+      <span className="muted">{who ? `${who} · ` : ''}{clock(c.created_at)}</span>
+    </div>
+  );
+}
+
+// Crew call: choose who to ring (everyone ticked to start with)
+function CrewCallPicker({ pick, onClose, people, onStart }) {
+  const [sel, setSel] = useState(() => new Set(people.map((p) => p.id)));
+  useEffect(() => { if (pick) setSel(new Set(people.map((p) => p.id))); }, [pick]); // eslint-disable-line react-hooks/exhaustive-deps
+  const toggle = (id) => setSel((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  return (
+    <Sheet open={!!pick} onClose={onClose} title={`Crew ${pick?.video ? 'video' : 'voice'} call`}>
+      {people.length === 0 ? <p className="muted">Invite friends to the crew first.</p> : (
+        <div className="call-people">
+          {people.map((p) => (
+            <label key={p.id} className="pick-row">
+              <Avatar person={p} size={40} />
+              <span className="grow"><strong>{p.name}</strong></span>
+              <input type="checkbox" checked={sel.has(p.id)} onChange={() => toggle(p.id)} />
+            </label>
+          ))}
+        </div>
+      )}
+      <button className="btn btn-ink" disabled={sel.size === 0} onClick={() => onStart([...sel])}>
+        <Icon name={pick?.video ? 'video' : 'phone'} size={18} /> Ring {sel.size === people.length ? 'everyone' : `${sel.size} ${sel.size === 1 ? 'person' : 'people'}`}
+      </button>
+    </Sheet>
   );
 }

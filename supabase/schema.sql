@@ -250,11 +250,152 @@ create policy "send message" on public.messages for insert
 drop policy if exists "delete own message" on public.messages;
 create policy "delete own message" on public.messages for delete using (sender_id = auth.uid());
 
+-- ── Calls (voice/video; the media itself runs on Daily.co) ──
+-- recipient_id null = crew call (the starter picks who to ring); set = a 1-to-1 call (more people can be added later).
+-- Everything is written through the functions below, never directly, so nobody can fake who is in a call.
+create table if not exists public.calls (
+  id            uuid primary key default gen_random_uuid(),
+  group_id      uuid not null references public.groups(id) on delete cascade,
+  created_by    uuid not null references public.profiles(id) on delete cascade,
+  recipient_id  uuid references public.profiles(id) on delete cascade,
+  video         boolean not null default true,
+  created_at    timestamptz not null default now(),
+  answered_at   timestamptz,
+  ended_at      timestamptz
+);
+create index if not exists calls_group_time on public.calls (group_id, created_at desc);
+
+-- Who was rung / is in each call
+create table if not exists public.call_members (
+  call_id     uuid not null references public.calls(id) on delete cascade,
+  user_id     uuid not null references public.profiles(id) on delete cascade,
+  group_id    uuid not null references public.groups(id) on delete cascade,
+  status      text not null check (status in ('ringing','joined','declined','missed','left')),
+  invited_by  uuid references public.profiles(id) on delete set null,
+  updated_at  timestamptz not null default now(),
+  primary key (call_id, user_id)
+);
+
+alter table public.calls        enable row level security;
+alter table public.call_members enable row level security;
+
+-- A crew call is visible to the whole crew; a 1-to-1 call only to the two people and anyone added to it
+create or replace function public.can_see_call(p_call uuid)
+returns boolean language sql stable security definer set search_path = public as $$
+  select exists (
+    select 1 from public.calls c
+    where c.id = p_call and c.group_id = public.my_group_id()
+      and (c.recipient_id is null or c.created_by = auth.uid() or c.recipient_id = auth.uid()
+           or exists (select 1 from public.call_members m where m.call_id = c.id and m.user_id = auth.uid()))
+  )
+$$;
+
+drop policy if exists "see own calls" on public.calls;
+create policy "see own calls" on public.calls for select using (public.can_see_call(id));
+drop policy if exists "see own call members" on public.call_members;
+create policy "see own call members" on public.call_members for select using (public.can_see_call(call_id));
+
+-- Ends a call once nobody is left in it; anyone still ringing becomes a missed call
+create or replace function public._call_wrapup(p_call uuid)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  if not exists (select 1 from public.call_members where call_id = p_call and status = 'joined') then
+    update public.calls set ended_at = coalesce(ended_at, now()) where id = p_call;
+    update public.call_members set status = 'missed', updated_at = now() where call_id = p_call and status = 'ringing';
+  end if;
+end $$;
+
+-- Leaves any other call I'm still marked as in (e.g. the app was closed mid-call)
+create or replace function public._call_leave_others(p_keep uuid)
+returns void language plpgsql security definer set search_path = public as $$
+declare c uuid;
+begin
+  for c in select call_id from public.call_members
+           where user_id = auth.uid() and status = 'joined' and call_id is distinct from p_keep loop
+    update public.call_members set status = 'left', updated_at = now() where call_id = c and user_id = auth.uid();
+    perform public._call_wrapup(c);
+  end loop;
+end $$;
+
+-- Start a call. 1-to-1: p_recipient. Crew call: p_recipient null, p_invite = who to ring (null = everyone).
+create or replace function public.start_call(p_recipient uuid, p_video boolean, p_invite uuid[] default null)
+returns uuid language plpgsql security definer set search_path = public as $$
+declare g uuid := public.my_group_id(); me uuid := auth.uid(); cid uuid; invitees uuid[];
+begin
+  if me is null or g is null then raise exception 'You are not in a crew'; end if;
+  if p_recipient is not null then
+    if p_recipient = me or not exists (select 1 from public.profiles where id = p_recipient and group_id = g) then
+      raise exception 'That person is not in your crew';
+    end if;
+    invitees := array[p_recipient];
+  else
+    select coalesce(array_agg(id), '{}') into invitees from public.profiles
+     where group_id = g and id <> me and (p_invite is null or id = any(p_invite));
+  end if;
+  perform public._call_leave_others(null);
+  insert into public.calls (group_id, created_by, recipient_id, video)
+  values (g, me, p_recipient, coalesce(p_video, true)) returning id into cid;
+  insert into public.call_members (call_id, user_id, group_id, status, invited_by) values (cid, me, g, 'joined', me);
+  insert into public.call_members (call_id, user_id, group_id, status, invited_by)
+  select cid, x, g, 'ringing', me from unnest(invitees) x;
+  return cid;
+end $$;
+
+-- Ring more crew members into a call you're in ("add people")
+create or replace function public.call_invite(p_call uuid, p_users uuid[])
+returns void language plpgsql security definer set search_path = public as $$
+declare g uuid := public.my_group_id(); me uuid := auth.uid();
+begin
+  if not exists (select 1 from public.call_members m join public.calls c on c.id = m.call_id
+                 where m.call_id = p_call and m.user_id = me and m.status = 'joined' and c.ended_at is null and c.group_id = g) then
+    raise exception 'You are not in this call';
+  end if;
+  insert into public.call_members (call_id, user_id, group_id, status, invited_by)
+  select p_call, x, g, 'ringing', me from unnest(p_users) x
+   where x <> me and exists (select 1 from public.profiles where id = x and group_id = g)
+  on conflict (call_id, user_id) do update set status = 'ringing', updated_at = now(), invited_by = excluded.invited_by
+   where public.call_members.status <> 'joined';
+end $$;
+
+-- Answer, decline or leave a call: p_status is 'joined', 'declined' or 'left'
+create or replace function public.call_respond(p_call uuid, p_status text)
+returns void language plpgsql security definer set search_path = public as $$
+declare g uuid := public.my_group_id(); me uuid := auth.uid(); c public.calls;
+begin
+  if p_status not in ('joined','declined','left') then raise exception 'Bad status'; end if;
+  if not public.can_see_call(p_call) then raise exception 'Call not found'; end if;
+  select * into c from public.calls where id = p_call;
+  if p_status = 'joined' then
+    if c.ended_at is not null then raise exception 'This call has ended'; end if;
+    perform public._call_leave_others(p_call);
+    if me <> c.created_by then update public.calls set answered_at = coalesce(answered_at, now()) where id = p_call; end if;
+  end if;
+  insert into public.call_members (call_id, user_id, group_id, status, invited_by)
+  values (p_call, me, g, p_status, me)
+  on conflict (call_id, user_id) do update set status = excluded.status, updated_at = now();
+  if p_status <> 'joined' then perform public._call_wrapup(p_call); end if;
+end $$;
+
+-- Used by the /api/daily-room server function: may this user join, and under what name?
+create or replace function public.call_token_info(p_call uuid)
+returns json language sql stable security definer set search_path = public as $$
+  select json_build_object('name', p.name, 'video', c.video)
+  from public.calls c join public.profiles p on p.id = auth.uid()
+  where c.id = p_call and c.ended_at is null and c.created_at > now() - interval '6 hours' and public.can_see_call(p_call)
+$$;
+
+grant execute on function public.start_call(uuid, boolean, uuid[]) to authenticated;
+grant execute on function public.call_invite(uuid, uuid[]) to authenticated;
+grant execute on function public.call_respond(uuid, text) to authenticated;
+grant execute on function public.call_token_info(uuid) to authenticated;
+revoke execute on function public._call_wrapup(uuid) from public, anon, authenticated;
+revoke execute on function public._call_leave_others(uuid) from public, anon, authenticated;
+
 -- ── Realtime: push changes to everyone's app instantly ──────
 do $$
 declare t text;
 begin
-  foreach t in array array['activities','kudos','comments','checklist_items','checklist_ticks','live_locations','profiles','groups','messages'] loop
+  foreach t in array array['activities','kudos','comments','checklist_items','checklist_ticks','live_locations','profiles','groups','messages','calls','call_members'] loop
     begin
       execute format('alter publication supabase_realtime add table public.%I', t);
     exception when duplicate_object then null;

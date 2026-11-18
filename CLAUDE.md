@@ -44,6 +44,10 @@ src/lib/api/localApi.js      demo backend (localStorage), same function signatur
 src/lib/api/demoSeed.js      seeded fake 5-person crew + ~35 days of activities
 src/lib/geo.js               GpsTracker class (filtering, elevation smoothing, pause/resume), haversine, simplify
 src/lib/chat.js              chat thread keys + unread counts (read-up-to times per device in localStorage)
+src/lib/calls.js             useCallController (call state at App level), Daily + demo engines, ringtones, callThreadKey
+src/components/CallLayer.jsx incoming-call screen, call screen (grid / 1-to-1 + self view), minimised pill, add-people sheet
+api/daily-room.js            Vercel serverless function: verifies the Supabase user via call_token_info, creates a private
+                             Daily room `ascent-<callId>`, returns { url, token }. Needs DAILY_API_KEY (server-only)
 src/lib/stats.js             all fitness maths: totals, streaks, readiness, leaderboard, badges, PLAN, TREK profile
 src/lib/format.js            number/date/pace formatting, TYPES (activity types), shareText()
 src/components/Icon.jsx      inline SVG icon set (`<Icon name="..."/>`) — add new icons here, don't add an icon library
@@ -114,6 +118,9 @@ Rules:
 `supabase/schema.sql` is the single source of truth. Tables: `groups`, `profiles`, `activities`, `kudos`, `comments`,
 `checklist_items`, `checklist_ticks`, `live_locations`, `messages`.
 - `messages.recipient_id` null = crew chat; set = private message, readable only by sender and recipient (RLS).
+- `calls` + `call_members` (status ringing/joined/declined/missed/left): no direct writes; only the RPCs `start_call`,
+  `call_invite`, `call_respond`, `call_token_info`. `can_see_call()` = crew call visible to the crew, 1-to-1 only to the
+  two people and anyone added. A call ends (`ended_at`) when nobody is `joined`; ringing members then become `missed`.
 - `activities.type` allowed values live in the `activities_type_check` constraint, dropped and re-added each run so
   new types reach existing databases.
 
@@ -136,6 +143,7 @@ Rules:
 VITE_SUPABASE_URL=
 VITE_SUPABASE_ANON_KEY=
 ```
+Server-only (Vercel env, never `VITE_`): `DAILY_API_KEY` for calls.
 Empty values → app runs in demo mode only.
 
 ## Deployment
@@ -152,6 +160,10 @@ worker auto-updates clients. Full steps are in `README.md` — keep it in sync w
 - Nudges use `navigator.share` / WhatsApp link, not push notifications. Web push would need a service-worker push
   handler + a Supabase Edge Function — not built yet.
 - Chat unread counts are per device (localStorage), not synced; no notifications while the app is closed.
+- Calls: Daily.co (`@daily-co/daily-js`, lazy-loaded), our own UI. Phones only ring while the app is open (no push).
+  A ring lasts 45 s (`RING_MS`). Crashed clients may stay "joined"; starting/joining another call clears that, and
+  calls older than 6 h count as over. `/api` only runs on Vercel or `vercel dev`, not `npm run dev`.
+  Demo mode fakes calls (crewmates "answer" on a timer; "Demo: get a test call" in the chat list).
 - No editing of saved activities (delete + re-log). No comment deletion UI (API exists).
 - Activities older than 120 days are not loaded (`loadCrew` in `App.jsx`).
 

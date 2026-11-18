@@ -175,6 +175,42 @@ export async function deleteMessage(id) {
   must(await supabase.from('messages').delete().eq('id', id));
 }
 
+// ── Calls (signalling here; audio/video runs on Daily.co) ───
+// Calls since `sinceIso`, newest first, each with members: [{ user_id, status, updated_at, invited_by }]
+export async function getCalls(groupId, sinceIso) {
+  const rows = must(
+    await supabase.from('calls').select('*, call_members(user_id, status, updated_at, invited_by)')
+      .eq('group_id', groupId).gte('created_at', sinceIso).order('created_at', { ascending: false }).limit(300)
+  );
+  return rows.map(({ call_members, ...c }) => ({ ...c, members: call_members || [] }));
+}
+
+export async function startCall(groupId, recipientId, video, inviteIds) {
+  return must(await supabase.rpc('start_call', { p_recipient: recipientId || null, p_video: !!video, p_invite: inviteIds || null }));
+}
+
+export async function inviteToCall(callId, userIds) {
+  must(await supabase.rpc('call_invite', { p_call: callId, p_users: userIds }));
+}
+
+// status: 'joined' | 'declined' | 'left'
+export async function respondToCall(callId, status) {
+  must(await supabase.rpc('call_respond', { p_call: callId, p_status: status }));
+}
+
+// Asks our server function (api/daily-room.js) for the Daily room URL + a token for this call
+export async function getCallToken(callId) {
+  const { data } = await supabase.auth.getSession();
+  const res = await fetch('/api/daily-room', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${data.session?.access_token || ''}` },
+    body: JSON.stringify({ callId }),
+  });
+  const out = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(out.error || `Could not connect the call (${res.status})`);
+  return out; // { url, token }
+}
+
 // ── Realtime ────────────────────────────────────────────────
 export function subscribe(groupId, cb) {
   const g = `group_id=eq.${groupId}`;
@@ -188,9 +224,12 @@ export function subscribe(groupId, cb) {
     .on('postgres_changes', { event: '*', schema: 'public', table: 'live_locations', filter: g }, cb)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles', filter: g }, cb)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'messages', filter: g }, cb)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'calls', filter: g }, cb)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'call_members', filter: g }, cb)
     .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'groups', filter: `id=eq.${groupId}` }, cb)
     .subscribe();
   return () => supabase.removeChannel(ch);
 }
 
 export async function resetDemo() {}
+export async function simulateIncomingCall() {} // demo only

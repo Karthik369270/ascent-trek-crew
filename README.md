@@ -2,7 +2,7 @@
 
 A private fitness tracker for a small group of friends preparing for a trek (set up for Chopta → Tungnath → Chandrashila).
 It's like Strava, but only your crew can see it: GPS walk/run/hike tracking, stair and incline logging, daily targets,
-streaks, leaderboards, crew chat and private messages, a trek readiness score, a shared "crew climb", a 4-week plan, a packing checklist and live
+streaks, leaderboards, crew chat and private messages, voice and video calls (1-to-1 or the whole crew), a trek readiness score, a shared "crew climb", a 4-week plan, a packing checklist and live
 location on trek day. Light and dark themes included.
 
 It's a **Progressive Web App (PWA)**: you deploy it once and send a link. Friends open it on their phone and tap
@@ -62,6 +62,25 @@ Netlify or Cloudflare Pages work the same way (build `npm run build`, publish `d
 When you push changes to GitHub later, Vercel redeploys automatically, and the app on everyone's phone updates itself
 the next time they open it.
 
+## 3b. Turn on calls (Daily.co, free, ~3 minutes)
+
+Voice and video calls run on Daily.co. The free plan includes 10,000 participant-minutes a month
+(an 8-person, 30-minute call uses 240).
+
+1. Sign up at https://dashboard.daily.co and open **Developers** to copy your **API key**.
+2. In Vercel → your project → **Settings → Environment Variables**, add `DAILY_API_KEY` with that key.
+   No `VITE_` prefix: the key must stay on the server and never reach the browser.
+3. Redeploy (Deployments → ⋯ → Redeploy), or just push a change.
+4. Make sure you've re-run `supabase/schema.sql` (it adds the `calls` tables).
+
+How it works: `api/daily-room.js` is a small Vercel server function. It checks the person is signed in and allowed
+into the call, creates a private Daily room for it, and hands back a short-lived token. Ringing, "add people" and the
+call log in chat go through Supabase realtime.
+
+Limits: a phone only rings while the app is open (there are no push notifications yet). Calls don't work under
+`npm run dev`, because the server function only runs on Vercel (or with `vercel dev`). Demo mode fakes calls with
+avatars so you can try the screens.
+
 ## 4. Get your friends in
 
 1. You sign up, choose **Create a crew**, and set the trek date.
@@ -109,7 +128,9 @@ src/lib/api/               supabaseApi.js (real backend), localApi.js + demoSeed
 src/lib/geo.js             GPS recorder with filtering + elevation smoothing
 src/lib/stats.js           readiness, streaks, leaderboard, badges, plan, crew climb, trek profile
 src/lib/hooks.js           theme (light/dark/auto), wake lock, recording state
-src/screens/               Home, Track, Feed, Crew, Plan, Profile, Auth, Onboarding
+src/screens/               Home, Track, Feed, Crew, Chat, Plan, Profile, Auth, Onboarding
+src/lib/calls.js           call state, ringing, Daily.co connection (components/CallLayer.jsx draws the call screens)
+api/daily-room.js          Vercel server function: checks the caller, returns a Daily room + token
 src/components/            charts (lollipop, mountain profile, pill sliders), map, icons
 src/styles.css             all styling; colour tokens for light + dark at the top
 ```
